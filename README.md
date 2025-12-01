@@ -631,18 +631,47 @@ int main() {
 ### 9.2 Named Pipes (FIFOs)
 Fifo — однонаправленный канал передачи данных между процессами, имеющий имя в файловой системе; позволяет обмениваться данными между процессами, которые не находятся в прямой родственной связи.
 
+Систенмые вызовы:
+- mkfifo — создать именованный pipe (FIFO)
 ```c
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
+mkfifo("/tmp/my_fifo", 0666); //Любой процесс может открыть /tmp/my_fifo для чтения или записи
+```
+
+- open — открыть FIFO. Можно использовать O_RDONLY / O_WRONLY / O_RDWR
+```c
+int fd = open("/tmp/my_fifo", O_WRONLY);
+```
+
+- read / write — работа с pipe
+```c
+write(fd, buffer, size);
+read(fd, buffer, size);
+```
+
+- close — закрыть дескриптор
+```c
+close(fd);
+```
+- unlink — удалить именованный pipe
+```c
+unlink("/tmp/my_fifo");
+```
+
+Код для примера:
+```c
+#include <sys/stat.h>   // mkfifo, S_IRUSR, S_IWUSR и др.
+#include <fcntl.h>      // open, O_RDONLY, O_WRONLY и др.
+#include <unistd.h>     // read, write, close
 int main() {
-    const char *fifo_name = "/tmp/my_fifo";
-    mkfifo(fifo_name, 0666);
-    int fd = open(fifo_name, O_WRONLY);
-    write(fd, "Hello FIFO", 10);
-    close(fd);
+    const char *fifo_name = "/tmp/my_fifo";  // Имя FIFO в файловой системе
+    mkfifo(fifo_name, 0666); // Создаём именованный pipe (FIFO). 0666 — права доступа (чтение и запись для всех)
+    int fd = open(fifo_name, O_WRONLY); // Открываем FIFO для записи. Блокируется, пока не откроется процесс на чтение
+    write(fd, "Hello FIFO", 10); // Пишем данные в FIFO. Для чтения другой процесс должен открыть FIFO на чтение
+    close(fd); // Закрываем дескриптор после записи
+    unlink(fifo_name);
     return 0;
 }
+
 ```
 Особенности:
 - Может существовать между любыми процессами.
