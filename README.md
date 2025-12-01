@@ -676,21 +676,72 @@ int main() {
 
 Shared Memory — область памяти, доступная сразу нескольким процессам; обеспечивает высокую скорость обмена данными, но требует внешних средств синхронизации (например, семафоров или мьютексов) для предотвращения состояния гонки.
 
+Системные вызовы:
+- shm_open — создать / открыть объект разделяемой памяти. Возвращает файловый дескриптор.
 ```c
-#include <sys/mman.h>
-#include <fcntl.h>
-#include <unistd.h>
+int fd = shm_open("/name", O_CREAT | O_RDWR, 0666);
+```
+- ftruncate — задать фактический размер shared memory.
+```c
+ftruncate(fd, size);
+```
+- mmap — отобразить область памяти. Возвращает указатель, через который можно читать и писать.
+```c
+void *ptr = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                 MAP_SHARED, fd, 0);
+```
+- Использовать память. Любые операции с памятью: структуры, массивы, произвольные данные.
+```c
+strcpy(ptr, "Hello");
+```
+- munmap — убрать отображение. Процесс больше не использует эту память (но объект всё ещё существует).
+```c
+munmap(ptr, size);
+```
+- close — закрыть файловый дескриптор. Закрывает FD от shm_open.
+```c
+close(fd);
+```
+- shm_unlink — удалить объект. После этого другие процессы не смогут его открыть.
+```c
+shm_unlink("/name");
+```
+
+Пример кода:
+```c
+#include <sys/mman.h>   // mmap, munmap, PROT_*, MAP_*
+#include <fcntl.h>      // shm_open, O_CREAT, O_RDWR
+#include <unistd.h>     // ftruncate, close
+#include <string.h>     // strcpy
 int main() {
-    const char *name = "/my_shm";
+    const char *name = "/my_shm";     // Имя объекта shared memory (обязательно начинается с '/')
+
+    // Создаём или открываем сегмент разделяемой памяти.
+    // O_CREAT — создать, если нет
+    // O_RDWR  — открыть для чтения и записи
+    // 0666    — права доступа
     int fd = shm_open(name, O_CREAT | O_RDWR, 0666);
-    ftruncate(fd, 4096);
-    char *ptr = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    strcpy(ptr, "Hello Shared Memory");
-    munmap(ptr, 4096);
-    close(fd);
-    shm_unlink(name);
+
+    ftruncate(fd, 4096); // Устанавливаем размер сегмента (иначе будет 0 байт)
+
+    // Отображаем объект в адресное пространство процесса:
+    // NULL — система сама выберет адрес
+    // 4096 — размер отображения
+    // PROT_READ | PROT_WRITE — разрешено читать и писать
+    // MAP_SHARED — изменения видны другим процессам
+    // fd — файловый дескриптор shared memory
+    // 0 — смещение
+    char *ptr = mmap(NULL, 4096,
+                     PROT_READ | PROT_WRITE,
+                     MAP_SHARED,
+                     fd, 0);
+    strcpy(ptr, "Hello Shared Memory"); // Пишем строку прямо в shared memory
+    munmap(ptr, 4096); // Удаляем отображение из памяти текущего процесса
+    close(fd); // Закрываем файловый дескриптор
+    shm_unlink(name); // Удаляем объект shared memory из системы
     return 0;
 }
+
 ```
 
 Особенности:
