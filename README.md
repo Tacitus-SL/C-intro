@@ -70,6 +70,7 @@
   - [Stringizing и token pasting](#153-stringizing-и-token-pasting)
   - [Variadic functions](#154-variadic-functions)
   - [Общее правило](#155-общее-правило)
+- [16. Секции и тестирование]
   
 ## 0. Введение
 
@@ -1857,3 +1858,155 @@ printf("%d %f %s", i, d, s);
 ### 15.5 Общее правило
 Макросы — инструмент низкого уровня.
 Используйте их только там, где функции или `static inline` неприменимы.
+
+---
+
+## 16. Секции и тестирование
+### 16.1 Секции
+**Секция** — это помеченная область в скомпилированном файле. Обычно компилятор сам распределяет всё по стандартным секциям:
+- `.text` — исполняемый код.
+- `.data` — инициализированные глобальные переменные.
+- `.bss` — неинициализированные переменные.
+Однако C позволяет создавать пользовательские секции и получить указатели на начало и конец этой секции.
+
+**Зачем это нужно?**
+Если у вас 100 модулей, и каждый нужно инициализировать, вам придется в `main.c` прописывать 100 вызовов `init_module_1()`, `init_module_2()` и т.д. Это неудобно и ведет к конфликтам при слиянии кода. Через секции каждый разработчик в своем файле просто помечает свою функцию инициализации атрибутом секции `module_inits`. В `main.c` вы просто пишете один цикл, который проходит от `__start_module_inits` до `__stop_module_inits` и вызывает всё подряд.
+
+**Объявление:**
+```c
+// Мы создаем указатель на функцию и просим линкер положить его в секцию "my_section"
+__attribute__((section("my_section"), used)) 
+void (*ptr)() = my_function;
+```
+`used` запрещает оптимизатору удалять функцию или переменную.
+`section("name")` помещает объект в указанную секцию ELF.
+
+**Пример:**
+```c
+extern module_init_t __start_module_inits[];
+extern module_init_t __stop_module_inits[];
+
+int main() {
+    // Цикл сам "найдет" все функции, которые были помечены секцией в любых файлах проекта
+    for (module_init_t *mod = __start_module_inits; mod < __stop_module_inits; mod++) {
+        (*mod)(); 
+    }
+}
+```
+- `__start_ИМЯ_СЕКЦИИ` — указатель для адреса начала.
+- `__stop_ИМЯ_СЕКЦИИ` —  указатель для адреса конца.
+
+---
+
+## 16.2 Тестирование
+**Уровни тестирования:**
+- Unit — функции и модули
+- Integration — взаимодействие компонентов
+- System / E2E — вся программа
+- Regression — защита от возврата багов
+- Smoke — быстрые проверки
+- Performance — нагрузка
+- Fuzz — случайные входы
+
+**Организация тестов:**
+```
+src/
+include/
+tests/
+integration/
+system/
+perf/
+```
+
+Популярные фреймворки для C:
+CUnit
+- системный пакет;
+- простая API;
+- ручная регистрация тестов.
+```c
+#include <CUnit/CUnit.h>
+#include <CUnit/Basic.h>
+#include "math_utils.h"
+
+static int suite_init(void) { return 0; }
+static int suite_clean(void) { return 0; }
+
+static void test_add(void) {
+    CU_ASSERT_EQUAL(add(2, 2), 4);
+    CU_ASSERT_EQUAL(add(-1, 1), 0);
+}
+
+int main(void) {
+    if (CU_initialize_registry() != CUE_SUCCESS) return CU_get_error();
+    CU_pSuite s = CU_add_suite("math", suite_init, suite_clean);
+    CU_add_test(s, "add sums", test_add);
+    CU_basic_set_mode(CU_BRM_VERBOSE);
+    CU_basic_run_tests();
+    unsigned fails = CU_get_number_of_failures();
+    CU_cleanup_registry();
+    return (int)fails;
+}
+```
+
+Unity
+- минимальный;
+- удобен для embedded;
+- один executable = один набор тестов.
+```c
+#include "unity.h" 
+#include "math_utils.h" 
+void setUp(void) {}
+void tearDown(void) {}
+static void test_add(void) {
+    TEST_ASSERT_EQUAL_INT(4, add(2, 2));
+    TEST_ASSERT_EQUAL_INT(0, add(-1, 1));
+}
+int main(void) {
+    UNITY_BEGIN();
+    RUN_TEST(test_add);
+    return UNITY_END();
+}
+```
+Criterion
+- автоматическое обнаружение тестов;
+- main() не нужен;
+- CLI и отчёты;
+- лучший выбор для Linux.
+```c
+#include <criterion/criterion.h> 
+#include "math_utils.h" 
+
+Test(math, add) {
+    cr_assert_eq(add(2, 2), 4);
+    cr_assert_eq(add(-1, 1), 0);
+}
+```
+Check
+- устаревший POSIX-стиль;
+- использовать только для legacy.
+```c
+#include <check.h> 
+#include "math_utils.h" 
+
+START_TEST(test_add) {
+    ck_assert_int_eq(add(2, 2), 4);
+    ck_assert_int_eq(add(-1, 1), 0);
+}
+END_TEST
+Suite* math_suite(void) {
+    Suite *s = suite_create("math");
+    TCase *tc_core = tcase_create("core");
+    tcase_add_test(tc_core, test_add);
+    suite_add_tcase(s, tc_core);
+    return s;
+}
+int main(void) {
+    int failed;
+    Suite *s = math_suite();
+    SRunner *sr = srunner_create(s);
+    srunner_run_all(sr, CK_NORMAL);
+    failed = srunner_ntests_failed(sr);
+    srunner_free(sr);
+    return (failed == 0) ? 0 : 1;
+}
+```
